@@ -1,0 +1,46 @@
+# Worldbuilder Canon corpus registry.
+# Paths are resolved relative to the vault root configured at runtime.
+
+corpora:
+  - name: canon
+    paths: ["canon/"]
+    glob: "**/*.md"
+    chunker: prose
+    extras: {}
+
+  - name: drafts
+    paths: ["drafts/"]
+    glob: "**/*.md"
+    chunker: prose
+    extras: {}
+
+  - name: entities
+    paths: ["entities/"]
+    glob: "**/*.md"
+    chunker: entity_sheet
+    extras: {}
+
+  - name: systems
+    paths: ["systems/"]
+    glob: "**/*.md"
+    chunker: system_sheet
+    extras: {}
+
+  - name: naming
+    paths: ["naming/"]
+    glob: "**/*.md"
+    chunker: naming_sheet
+    extras: {}
+
+  - name: brainstorm
+    paths: ["brainstorm/"]
+    glob: "**/*.md"
+    exclude: ["ideation-sessions/**"]
+    chunker: journal
+    extras: {}
+
+  - name: research
+    paths: ["research/"]
+    glob: "**/*.md"
+    chunker: prose
+    extras: {}
