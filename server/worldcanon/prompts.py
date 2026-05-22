@@ -124,3 +124,31 @@ def render_ideation_response(
 
 def render_fact_extraction(*, text: str, source: str) -> str:
     return _load("fact_extraction").format(text=text, source=source)
+
+
+def render_name_suggest(
+    *,
+    culture: str,
+    conventions: list[str],
+    used_names: list[str],
+    candidate_names: list[str],
+    role: str | None,
+    vibe: str | None,
+    count: int,
+) -> str:
+    conventions_block = (
+        "\n".join(f"- {c}" for c in conventions) if conventions else "(no conventions documented)"
+    )
+    used_block = ", ".join(used_names) if used_names else "(none)"
+    candidate_block = ", ".join(candidate_names) if candidate_names else "(none)"
+    role_line = f"Role context: {role}" if role else ""
+    vibe_line = f"Vibe context: {vibe}" if vibe else ""
+    return _load("name_suggest").format(
+        culture=culture,
+        conventions_block=conventions_block,
+        used_names=used_block,
+        candidate_names=candidate_block,
+        role_line=role_line,
+        vibe_line=vibe_line,
+        count=count,
+    )
