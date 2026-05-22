@@ -58,6 +58,11 @@ class IdeationRespondRequest(BaseModel):
     answer: str = Field(..., min_length=1)
 
 
+class ProposeFactsRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+    source: str = Field(..., min_length=1)
+
+
 def build_app(
     *,
     con: sqlite3.Connection,
@@ -360,6 +365,22 @@ def build_app(
             "next_question": next_q,
         }
 
+    @app.post("/propose-facts")
+    def propose_facts(req: ProposeFactsRequest) -> dict[str, Any]:
+        prompt = render_fact_extraction(text=req.text, source=req.source)
+        try:
+            content = llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=None,
+                response_format="json",
+            )
+        except LLMUnavailableError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"status": "llm_unavailable", "reason": str(exc)},
+            ) from exc
+        return {"proposed_facts": _parse_proposed_facts(content)}
+
     return app
 
 
@@ -438,3 +459,38 @@ def _parse_ideation_response(content: str) -> dict:
     if not isinstance(addressed, str):
         addressed = None
     return {"facts": facts, "next_question": next_q, "addressed_gap": addressed}
+
+
+def _parse_proposed_facts(content: str) -> list[dict]:
+    """Lenient parse for /propose-facts response."""
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n", "", text)
+        text = re.sub(r"\n```\s*$", "", text)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return []
+    try:
+        data = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("proposed_facts")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for f in raw:
+        if not isinstance(f, dict):
+            continue
+        entity = f.get("entity")
+        claim = f.get("claim")
+        if not isinstance(entity, str) or not isinstance(claim, str):
+            continue
+        out.append({
+            "entity": entity.strip(),
+            "claim": claim.strip(),
+            "confidence": str(f.get("confidence", "medium")),
+        })
+    return out
