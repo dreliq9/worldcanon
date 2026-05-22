@@ -26,7 +26,7 @@ from .ideation import (
     get_session,
     start_session,
 )
-from .ledger import list_facts, list_relationships, list_rules
+from .ledger import list_facts, list_names, list_relationships, list_rules
 from .llm import LLMBackend, LLMUnavailableError
 from .prompts import (
     render_ask_world,
@@ -34,6 +34,7 @@ from .prompts import (
     render_ideation_question,
     render_ideation_response,
     render_fact_extraction,
+    render_name_suggest,
 )
 from .registry import CorpusConfig
 from .search import search
@@ -72,6 +73,13 @@ class CaptureRequest(BaseModel):
     source: str = "webhook"
     entities: list[str] = Field(default_factory=list)
     topics: list[str] = Field(default_factory=list)
+
+
+class NameSuggestRequest(BaseModel):
+    culture: str = Field(..., min_length=1)
+    role: str | None = None
+    vibe: str | None = None
+    count: int = 5
 
 
 def build_app(
@@ -449,6 +457,56 @@ def build_app(
                 entry["candidate_count"] = r["n"]
         return {"cultures": sorted(by_culture.values(), key=lambda c: c["culture"])}
 
+    @app.post("/name/suggest")
+    def name_suggest(req: NameSuggestRequest) -> dict[str, Any]:
+        sheet_row = con.execute(
+            """SELECT * FROM chunks
+               WHERE corpus = 'naming'
+                 AND json_extract(metadata_json, '$.kind') = 'naming_sheet'
+                 AND json_extract(metadata_json, '$.culture') = ?
+               LIMIT 1""",
+            (req.culture,),
+        ).fetchone()
+        if sheet_row is None:
+            raise HTTPException(status_code=404, detail=f"culture not found: {req.culture}")
+        meta = json.loads(sheet_row["metadata_json"])
+        conventions_raw = meta.get("conventions", {})
+        conventions: list[str] = []
+        if isinstance(conventions_raw, dict):
+            for k, v in conventions_raw.items():
+                if isinstance(v, list):
+                    conventions.extend(str(x) for x in v)
+                else:
+                    conventions.append(f"{k}: {v}")
+        elif isinstance(conventions_raw, list):
+            conventions = [str(c) for c in conventions_raw]
+
+        existing = list_names(con, culture=req.culture)
+        used_names = [n["name"] for n in existing if n["status"] == "used"]
+        candidate_names = [n["name"] for n in existing if n["status"] == "candidate"]
+
+        prompt = render_name_suggest(
+            culture=req.culture,
+            conventions=conventions,
+            used_names=used_names,
+            candidate_names=candidate_names,
+            role=req.role,
+            vibe=req.vibe,
+            count=req.count,
+        )
+        try:
+            content = llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=None,
+                response_format="json",
+            )
+        except LLMUnavailableError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"status": "llm_unavailable", "reason": str(exc)},
+            ) from exc
+        return {"suggestions": _parse_name_suggestions(content)}
+
     return app
 
 
@@ -560,5 +618,37 @@ def _parse_proposed_facts(content: str) -> list[dict]:
             "entity": entity.strip(),
             "claim": claim.strip(),
             "confidence": str(f.get("confidence", "medium")),
+        })
+    return out
+
+
+def _parse_name_suggestions(content: str) -> list[dict]:
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n", "", text)
+        text = re.sub(r"\n```\s*$", "", text)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return []
+    try:
+        data = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    raw = data.get("suggestions")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for s in raw:
+        if not isinstance(s, dict):
+            continue
+        name = s.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        out.append({
+            "name": name.strip(),
+            "reasoning": str(s.get("reasoning", "")),
         })
     return out
