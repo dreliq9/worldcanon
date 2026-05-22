@@ -72,7 +72,7 @@ def main() -> None:
     watcher.start()
     log.info("watcher started")
 
-    app = build_app(con=con, embedder=embedder, cfgs=cfgs, llm=llm)
+    app = build_app(con=con, embedder=embedder, cfgs=cfgs, llm=llm, vault_root=vault)
 
     def _shutdown(*_):
         log.info("shutting down")

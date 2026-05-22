@@ -24,7 +24,7 @@ def _build_client(stub, tmp_path):
     cfgs = load_registry(REPO / "corpora.yaml", vault_root=FIXTURE_VAULT)
     for cfg in cfgs:
         full_index_corpus(con, cfg, embedder)
-    app = build_app(con=con, embedder=embedder, cfgs=cfgs, llm=stub)
+    app = build_app(con=con, embedder=embedder, cfgs=cfgs, llm=stub, vault_root=FIXTURE_VAULT)
     return TestClient(app)
 
 

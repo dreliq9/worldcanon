@@ -5,14 +5,18 @@ spin up a real HTTP server.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import re
 import sqlite3
+from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException
 
 from pydantic import BaseModel, Field
+
+from .capture import write_brainstorm_note
 
 from .embedder import Embedder
 from .ideation import (
@@ -63,12 +67,20 @@ class ProposeFactsRequest(BaseModel):
     source: str = Field(..., min_length=1)
 
 
+class CaptureRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+    source: str = "webhook"
+    entities: list[str] = Field(default_factory=list)
+    topics: list[str] = Field(default_factory=list)
+
+
 def build_app(
     *,
     con: sqlite3.Connection,
     embedder: Embedder,
     cfgs: list[CorpusConfig],
     llm: LLMBackend,
+    vault_root: Path,
 ) -> FastAPI:
     app = FastAPI(title="worldcanon-sidecar")
 
@@ -380,6 +392,20 @@ def build_app(
                 detail={"status": "llm_unavailable", "reason": str(exc)},
             ) from exc
         return {"proposed_facts": _parse_proposed_facts(content)}
+
+    @app.post("/capture")
+    def capture_endpoint(req: CaptureRequest) -> dict[str, Any]:
+        if not req.text.strip():
+            raise HTTPException(status_code=422, detail="text must not be empty")
+        now_iso = datetime.datetime.now().isoformat(timespec="seconds")
+        return write_brainstorm_note(
+            vault_root=vault_root,
+            text=req.text,
+            source=req.source,
+            entities=req.entities,
+            topics=req.topics,
+            now_iso=now_iso,
+        )
 
     return app
 
