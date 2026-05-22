@@ -15,9 +15,22 @@ from fastapi import Body, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from .embedder import Embedder
+from .ideation import (
+    SessionNotFoundError,
+    append_turn,
+    end_session,
+    get_session,
+    start_session,
+)
 from .ledger import list_facts, list_relationships, list_rules
 from .llm import LLMBackend, LLMUnavailableError
-from .prompts import render_ask_world, render_contradiction_check
+from .prompts import (
+    render_ask_world,
+    render_contradiction_check,
+    render_ideation_question,
+    render_ideation_response,
+    render_fact_extraction,
+)
 from .registry import CorpusConfig
 from .search import search
 
@@ -35,6 +48,10 @@ class ContradictionRequest(BaseModel):
     text: str = Field(..., min_length=1)
     entities: list[str] | None = None
     scope: str | None = None
+
+
+class IdeationStartRequest(BaseModel):
+    entity: str = Field(..., min_length=1)
 
 
 def build_app(
@@ -237,6 +254,60 @@ def build_app(
             for item in _parse_contradictions(content):
                 findings.append({"entity": entity, **item})
         return {"findings": findings}
+
+    @app.post("/ideation/start")
+    def ideation_start(req: IdeationStartRequest) -> dict[str, Any]:
+        sheet_row = con.execute(
+            """SELECT * FROM chunks
+               WHERE corpus = 'entities'
+                 AND json_extract(metadata_json, '$.kind') = 'entity_sheet'
+                 AND json_extract(metadata_json, '$.name') = ?
+               LIMIT 1""",
+            (req.entity,),
+        ).fetchone()
+        if sheet_row is None:
+            raise HTTPException(status_code=404, detail=f"entity not found: {req.entity}")
+        sheet_meta = json.loads(sheet_row["metadata_json"])
+        entity_type = str(sheet_meta.get("type", "character"))
+
+        existing_facts = list_facts(con, entity=req.entity)
+        facts_block = (
+            "\n".join(f"- {f['claim']} (status: {f['status']})" for f in existing_facts)
+            if existing_facts
+            else "(no facts on file yet)"
+        )
+        entity_state = f"{sheet_row['body']}\n\nKnown facts:\n{facts_block}"
+
+        relevant_hits = search(con, embedder, query=req.entity, corpus=["canon", "drafts"], limit=5)
+        if relevant_hits:
+            relevant_canon = "\n\n".join(
+                f"[{h['source_path']}] {h['body']}" for h in relevant_hits
+            )
+        else:
+            relevant_canon = "(none)"
+
+        sid = start_session(con, entity=req.entity, entity_type=entity_type)
+        prompt = render_ideation_question(
+            entity_type=entity_type,
+            entity_name=req.entity,
+            entity_state=entity_state,
+            relevant_canon=relevant_canon,
+            addressed_gaps=[],
+        )
+        try:
+            question = llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=None,
+            )
+        except LLMUnavailableError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"status": "llm_unavailable", "reason": str(exc)},
+            ) from exc
+
+        question = question.strip()
+        append_turn(con, sid, role="ai", content=question)
+        return {"session_id": sid, "first_question": question}
 
     return app
 
