@@ -44,8 +44,8 @@ class ChunkRow:
     indexed_at: int
 
 
-def open_store(path: str | Path, dim: int) -> sqlite3.Connection:
-    con = sqlite3.connect(str(path))
+def open_store(path: str | Path, dim: int, check_same_thread: bool = True) -> sqlite3.Connection:
+    con = sqlite3.connect(str(path), check_same_thread=check_same_thread)
     con.row_factory = sqlite3.Row
     con.enable_load_extension(True)
     sqlite_vec.load(con)
