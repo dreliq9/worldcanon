@@ -54,6 +54,10 @@ class IdeationStartRequest(BaseModel):
     entity: str = Field(..., min_length=1)
 
 
+class IdeationRespondRequest(BaseModel):
+    answer: str = Field(..., min_length=1)
+
+
 def build_app(
     *,
     con: sqlite3.Connection,
@@ -309,6 +313,53 @@ def build_app(
         append_turn(con, sid, role="ai", content=question)
         return {"session_id": sid, "first_question": question}
 
+    @app.post("/ideation/{session_id}/respond")
+    def ideation_respond(session_id: str, req: IdeationRespondRequest) -> dict[str, Any]:
+        try:
+            state = get_session(con, session_id)
+        except SessionNotFoundError:
+            raise HTTPException(status_code=404, detail=f"session not found: {session_id}")
+
+        # Record the writer's turn
+        append_turn(con, session_id, role="writer", content=req.answer)
+
+        # Re-fetch state to include the writer turn we just appended
+        state = get_session(con, session_id)
+        transcript_text = _format_transcript(state["transcript"])
+
+        prompt = render_ideation_response(
+            entity_type=state["entity_type"],
+            entity_name=state["entity"],
+            transcript=transcript_text,
+            answer=req.answer,
+            addressed_gaps=state["addressed_gaps"],
+        )
+        try:
+            content = llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=None,
+                response_format="json",
+            )
+        except LLMUnavailableError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"status": "llm_unavailable", "reason": str(exc)},
+            ) from exc
+
+        parsed = _parse_ideation_response(content)
+        next_q = parsed.get("next_question")
+        addressed = parsed.get("addressed_gap")
+        if next_q:
+            append_turn(con, session_id, role="ai", content=next_q,
+                        addressed_gap=addressed if isinstance(addressed, str) else None)
+        elif addressed and isinstance(addressed, str):
+            append_turn(con, session_id, role="ai", content="(no further questions)",
+                        addressed_gap=addressed)
+        return {
+            "proposed_facts": parsed.get("facts", []),
+            "next_question": next_q,
+        }
+
     return app
 
 
@@ -339,3 +390,51 @@ def _parse_contradictions(content: str) -> list[dict]:
             "reasoning": str(item.get("reasoning", "")),
         })
     return out
+
+
+def _format_transcript(turns: list[dict]) -> str:
+    lines: list[str] = []
+    for t in turns:
+        role = "AI" if t.get("role") == "ai" else "Writer"
+        lines.append(f"{role}: {t.get('content', '')}")
+    return "\n\n".join(lines)
+
+
+def _parse_ideation_response(content: str) -> dict:
+    """Lenient parse of the JSON returned by the ideation response prompt."""
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n", "", text)
+        text = re.sub(r"\n```\s*$", "", text)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return {"facts": [], "next_question": None, "addressed_gap": None}
+    try:
+        data = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return {"facts": [], "next_question": None, "addressed_gap": None}
+    if not isinstance(data, dict):
+        return {"facts": [], "next_question": None, "addressed_gap": None}
+    facts_raw = data.get("facts")
+    facts: list[dict] = []
+    if isinstance(facts_raw, list):
+        for f in facts_raw:
+            if not isinstance(f, dict):
+                continue
+            claim = f.get("claim")
+            if not isinstance(claim, str) or not claim.strip():
+                continue
+            facts.append({
+                "claim": claim.strip(),
+                "confidence": str(f.get("confidence", "medium")),
+            })
+    next_q = data.get("next_question")
+    if isinstance(next_q, str):
+        next_q = next_q.strip() or None
+    else:
+        next_q = None
+    addressed = data.get("addressed_gap")
+    if not isinstance(addressed, str):
+        addressed = None
+    return {"facts": facts, "next_question": next_q, "addressed_gap": addressed}

@@ -71,3 +71,66 @@ def test_ideation_start_503_when_llm_unavailable(tmp_path):
     client, _ = _build_client(BoomLLM(), tmp_path)
     r = client.post("/ideation/start", json={"entity": "Aerin"})
     assert r.status_code == 503
+
+
+def test_ideation_respond_returns_facts_and_next_question(tmp_path):
+    stub = StubBackend(responses=[
+        # First call: the question
+        "What does Aerin want?",
+        # Second call: response with extracted facts + next question
+        json.dumps({
+            "facts": [
+                {"claim": "Aerin wants to be free", "confidence": "high"},
+            ],
+            "next_question": "Why does she want freedom?",
+            "addressed_gap": "Motivation / what they want",
+        }),
+    ])
+    client, _ = _build_client(stub, tmp_path)
+    sid = client.post("/ideation/start", json={"entity": "Aerin"}).json()["session_id"]
+    r = client.post(
+        f"/ideation/{sid}/respond",
+        json={"answer": "She wants to be free."},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["proposed_facts"]) == 1
+    assert "be free" in body["proposed_facts"][0]["claim"]
+    assert "Why does she want freedom" in body["next_question"]
+
+
+def test_ideation_respond_null_next_question_when_done(tmp_path):
+    stub = StubBackend(responses=[
+        "What does Aerin want?",
+        json.dumps({
+            "facts": [],
+            "next_question": None,
+            "addressed_gap": "Motivation / what they want",
+        }),
+    ])
+    client, _ = _build_client(stub, tmp_path)
+    sid = client.post("/ideation/start", json={"entity": "Aerin"}).json()["session_id"]
+    r = client.post(f"/ideation/{sid}/respond", json={"answer": "Nothing."})
+    assert r.status_code == 200
+    assert r.json()["next_question"] is None
+
+
+def test_ideation_respond_404_for_unknown_session(tmp_path):
+    stub = StubBackend(responses=[])
+    client, _ = _build_client(stub, tmp_path)
+    r = client.post("/ideation/bogus/respond", json={"answer": "anything"})
+    assert r.status_code == 404
+
+
+def test_ideation_respond_handles_malformed_json(tmp_path):
+    stub = StubBackend(responses=[
+        "What does Aerin want?",
+        "this is not JSON",
+    ])
+    client, _ = _build_client(stub, tmp_path)
+    sid = client.post("/ideation/start", json={"entity": "Aerin"}).json()["session_id"]
+    r = client.post(f"/ideation/{sid}/respond", json={"answer": "ok"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["proposed_facts"] == []
+    assert body["next_question"] is None
