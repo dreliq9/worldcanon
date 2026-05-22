@@ -227,6 +227,7 @@ def build_app(
                 content = llm.chat(
                     messages=[{"role": "user", "content": prompt}],
                     model=None,
+                    response_format="json",
                 )
             except LLMUnavailableError as exc:
                 raise HTTPException(

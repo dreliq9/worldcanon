@@ -28,7 +28,13 @@ class LLMUnavailableError(Exception):
 
 
 class LLMBackend(Protocol):
-    def chat(self, *, messages: list[dict], model: str | None) -> str: ...
+    def chat(
+        self,
+        *,
+        messages: list[dict],
+        model: str | None,
+        response_format: str | None = None,
+    ) -> str: ...
 
 
 class StubBackend:
@@ -38,8 +44,14 @@ class StubBackend:
         self._responses = list(responses)
         self.calls: list[dict] = []
 
-    def chat(self, *, messages: list[dict], model: str | None) -> str:
-        self.calls.append({"messages": messages, "model": model})
+    def chat(
+        self,
+        *,
+        messages: list[dict],
+        model: str | None,
+        response_format: str | None = None,
+    ) -> str:
+        self.calls.append({"messages": messages, "model": model, "response_format": response_format})
         return self._responses.pop(0)
 
 
@@ -57,12 +69,20 @@ class OllamaBackend:
         self._api_key = api_key
         self._timeout = timeout_seconds
 
-    def chat(self, *, messages: list[dict], model: str | None) -> str:
-        body = {
+    def chat(
+        self,
+        *,
+        messages: list[dict],
+        model: str | None,
+        response_format: str | None = None,
+    ) -> str:
+        body: dict[str, object] = {
             "model": model or self._model_default,
             "messages": messages,
             "stream": False,
         }
+        if response_format == "json":
+            body["format"] = "json"
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"

@@ -53,7 +53,7 @@ def test_ask_endpoint_llm_unavailable(tmp_path):
     from worldcanon.llm import LLMUnavailableError
 
     class BoomLLM:
-        def chat(self, *, messages, model):
+        def chat(self, *, messages, model, response_format=None):
             raise LLMUnavailableError("test-induced")
 
     client = _build_client(BoomLLM(), tmp_path)
