@@ -17,6 +17,7 @@ import uvicorn
 
 from .api import build_app
 from .embedder import build_embedder
+from .ideation import install_ideation_schema
 from .indexer import full_index_corpus
 from .ledger import install_ledger_schema
 from .llm import build_llm_backend
@@ -59,6 +60,7 @@ def main() -> None:
     llm = build_llm_backend()
     con = open_store(db_path, dim=embedder.dim, check_same_thread=False)
     install_ledger_schema(con)
+    install_ideation_schema(con)
     cfgs = load_registry(args.corpora, vault_root=vault)
 
     log.info("opportunistic index sweep starting (vault=%s)", vault)
