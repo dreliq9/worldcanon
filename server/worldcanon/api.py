@@ -6,6 +6,7 @@ spin up a real HTTP server.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from typing import Any
 
@@ -16,15 +17,24 @@ from pydantic import BaseModel, Field
 from .embedder import Embedder
 from .ledger import list_facts, list_relationships, list_rules
 from .llm import LLMBackend, LLMUnavailableError
-from .prompts import render_ask_world
+from .prompts import render_ask_world, render_contradiction_check
 from .registry import CorpusConfig
 from .search import search
+
+
+_WIKILINK = re.compile(r"\[\[([^\]|#]+?)(?:\|[^\]]+)?(?:#[^\]]+)?\]\]")
 
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=1)
     corpus: list[str] | None = None
     limit: int = 5
+
+
+class ContradictionRequest(BaseModel):
+    text: str = Field(..., min_length=1)
+    entities: list[str] | None = None
+    scope: str | None = None
 
 
 def build_app(
@@ -195,4 +205,65 @@ def build_app(
         citations = sorted({h["source_path"] for h in hits})
         return {"answer": content, "citations": citations, "hits": hits}
 
+    @app.post("/contradiction-check")
+    def contradiction_check(req: ContradictionRequest) -> dict[str, Any]:
+        if req.entities is not None:
+            entity_names = list(dict.fromkeys(req.entities))
+        else:
+            entity_names = sorted({m.group(1).strip() for m in _WIKILINK.finditer(req.text)})
+
+        findings: list[dict] = []
+        for entity in entity_names:
+            facts = list_facts(con, entity=entity)
+            canonish = [f for f in facts if f["status"] in {"canon", "draft"}]
+            if not canonish:
+                continue
+            prompt = render_contradiction_check(
+                entity=entity,
+                facts=canonish,
+                text=req.text,
+            )
+            try:
+                content = llm.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    model=None,
+                )
+            except LLMUnavailableError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"status": "llm_unavailable", "reason": str(exc)},
+                ) from exc
+            for item in _parse_contradictions(content):
+                findings.append({"entity": entity, **item})
+        return {"findings": findings}
+
     return app
+
+
+def _parse_contradictions(content: str) -> list[dict]:
+    """Lenient JSON parse — strip code fences, locate the first {...} object."""
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n", "", text)
+        text = re.sub(r"\n```\s*$", "", text)
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        return []
+    try:
+        data = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return []
+    items = data.get("contradictions") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return []
+    out: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        out.append({
+            "new_claim": str(item.get("new_claim", "")),
+            "conflicting_canon": str(item.get("conflicting_canon", "")),
+            "reasoning": str(item.get("reasoning", "")),
+        })
+    return out
