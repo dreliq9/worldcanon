@@ -407,6 +407,30 @@ def build_app(
             now_iso=now_iso,
         )
 
+    @app.get("/unprocessed-brainstorm")
+    def unprocessed_brainstorm() -> dict[str, Any]:
+        rows = con.execute(
+            """SELECT chunk_id, source_path, body, metadata_json, mtime
+               FROM chunks
+               WHERE corpus = 'brainstorm'
+                 AND json_extract(metadata_json, '$.status') = 'unprocessed'
+               ORDER BY mtime DESC""",
+        ).fetchall()
+        seen: dict[str, dict] = {}
+        for row in rows:
+            sp = row["source_path"]
+            if sp in seen:
+                continue
+            meta = json.loads(row["metadata_json"])
+            preview = (row["body"] or "").strip().replace("\n", " ")
+            seen[sp] = {
+                "source_path": sp,
+                "preview": preview[:140],
+                "date": meta.get("date"),
+                "mtime": row["mtime"],
+            }
+        return {"notes": list(seen.values())}
+
     return app
 
 
