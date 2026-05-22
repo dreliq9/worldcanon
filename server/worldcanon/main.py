@@ -19,6 +19,7 @@ from .api import build_app
 from .embedder import build_embedder
 from .indexer import full_index_corpus
 from .ledger import install_ledger_schema
+from .llm import build_llm_backend
 from .registry import load_registry
 from .store import open_store
 from .watcher import VaultWatcher
@@ -55,6 +56,7 @@ def main() -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     embedder = build_embedder()
+    llm = build_llm_backend()
     con = open_store(db_path, dim=embedder.dim, check_same_thread=False)
     install_ledger_schema(con)
     cfgs = load_registry(args.corpora, vault_root=vault)
@@ -68,7 +70,7 @@ def main() -> None:
     watcher.start()
     log.info("watcher started")
 
-    app = build_app(con=con, embedder=embedder, cfgs=cfgs)
+    app = build_app(con=con, embedder=embedder, cfgs=cfgs, llm=llm)
 
     def _shutdown(*_):
         log.info("shutting down")

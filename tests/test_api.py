@@ -7,6 +7,7 @@ from worldcanon.api import build_app
 from worldcanon.embedder import HashEmbedBackend
 from worldcanon.indexer import full_index_corpus
 from worldcanon.ledger import install_ledger_schema
+from worldcanon.llm import StubBackend
 from worldcanon.registry import load_registry
 from worldcanon.store import open_store
 
@@ -23,7 +24,7 @@ def client(tmp_path):
     cfgs = load_registry(REPO / "corpora.yaml", vault_root=FIXTURE_VAULT)
     for cfg in cfgs:
         full_index_corpus(con, cfg, embedder)
-    app = build_app(con=con, embedder=embedder, cfgs=cfgs)
+    app = build_app(con=con, embedder=embedder, cfgs=cfgs, llm=StubBackend(responses=[]))
     yield TestClient(app)
     con.close()
 

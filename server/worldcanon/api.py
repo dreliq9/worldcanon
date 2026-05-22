@@ -9,12 +9,22 @@ import json
 import sqlite3
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
+
+from pydantic import BaseModel, Field
 
 from .embedder import Embedder
 from .ledger import list_facts, list_relationships, list_rules
+from .llm import LLMBackend, LLMUnavailableError
+from .prompts import render_ask_world
 from .registry import CorpusConfig
 from .search import search
+
+
+class AskRequest(BaseModel):
+    question: str = Field(..., min_length=1)
+    corpus: list[str] | None = None
+    limit: int = 5
 
 
 def build_app(
@@ -22,6 +32,7 @@ def build_app(
     con: sqlite3.Connection,
     embedder: Embedder,
     cfgs: list[CorpusConfig],
+    llm: LLMBackend,
 ) -> FastAPI:
     app = FastAPI(title="worldcanon-sidecar")
 
@@ -164,5 +175,24 @@ def build_app(
                 "source_file": row["source_path"],
             })
         return {"events": events}
+
+    @app.post("/ask")
+    def ask_endpoint(req: AskRequest) -> dict[str, Any]:
+        if not req.question.strip():
+            raise HTTPException(status_code=422, detail="question must not be empty")
+        hits = search(con, embedder, query=req.question, corpus=req.corpus, limit=req.limit)
+        prompt = render_ask_world(question=req.question, chunks=hits)
+        try:
+            content = llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=None,
+            )
+        except LLMUnavailableError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"status": "llm_unavailable", "reason": str(exc)},
+            ) from exc
+        citations = sorted({h["source_path"] for h in hits})
+        return {"answer": content, "citations": citations, "hits": hits}
 
     return app
