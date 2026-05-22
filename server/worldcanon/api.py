@@ -431,6 +431,24 @@ def build_app(
             }
         return {"notes": list(seen.values())}
 
+    @app.get("/name/cultures")
+    def name_cultures() -> dict[str, Any]:
+        rows = con.execute(
+            """SELECT culture, status, COUNT(*) AS n
+               FROM names
+               GROUP BY culture, status""",
+        ).fetchall()
+        by_culture: dict[str, dict] = {}
+        for r in rows:
+            entry = by_culture.setdefault(
+                r["culture"], {"culture": r["culture"], "used_count": 0, "candidate_count": 0},
+            )
+            if r["status"] == "used":
+                entry["used_count"] = r["n"]
+            elif r["status"] == "candidate":
+                entry["candidate_count"] = r["n"]
+        return {"cultures": sorted(by_culture.values(), key=lambda c: c["culture"])}
+
     return app
 
 
