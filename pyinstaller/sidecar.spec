@@ -4,7 +4,7 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
+from PyInstaller.utils.hooks import collect_all
 
 HERE = Path(SPECPATH).resolve()
 REPO_ROOT = HERE.parent

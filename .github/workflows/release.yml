@@ -47,32 +47,55 @@ jobs:
           # Importer is a single binary with no dependencies — --help is enough.
           .\dist\worldcanon-import.exe --help
 
-          # The sidecar's bugs hide past argparse — sqlite_vec native libs,
-          # data files like corpora.yaml, fastembed bundling. Start it
-          # against starter-vault and confirm /stats responds. Use the hash
-          # embedder so the test doesn't depend on HuggingFace reachability.
-          $env:WORLDCANON_EMBEDDER = "hash"
+          # Force the env var into Process scope. $env:X works in pwsh 7 by
+          # convention but is not a documented guarantee for child-process
+          # inheritance via Start-Process; the explicit form is safer.
+          [Environment]::SetEnvironmentVariable("WORLDCANON_EMBEDDER", "hash", "Process")
+
+          # Pass an absolute vault path so the child's CWD doesn't matter.
+          # Start-Process can't take -WorkingDirectory together with our
+          # other flags without quoting headaches; absolute path sidesteps it.
+          $vaultPath = (Resolve-Path starter-vault).Path
+
           $proc = Start-Process `
             -FilePath ".\dist\worldcanon-sidecar\worldcanon-sidecar.exe" `
-            -ArgumentList "--vault","starter-vault","--port","7777","--log-level","info" `
+            -ArgumentList "--vault",$vaultPath,"--port","7777","--log-level","info" `
             -RedirectStandardOutput sidecar-out.log `
             -RedirectStandardError sidecar-err.log `
             -PassThru -NoNewWindow
 
           $ok = $false
+          $crashed = $false
+          $reason = ""
           for ($i = 1; $i -le 60; $i++) {
             Start-Sleep -Seconds 1
+            if ($proc.HasExited) {
+              $crashed = $true
+              $reason = "sidecar exited after $i second(s) with code $($proc.ExitCode)"
+              break
+            }
             try {
               $r = Invoke-WebRequest -Uri http://127.0.0.1:7777/stats -TimeoutSec 2 -UseBasicParsing
               if ($r.StatusCode -eq 200) {
-                Write-Host "Sidecar bound port 7777 after $i second(s)."
-                Write-Host $r.Content
-                $ok = $true
+                # Verify the indexer actually ran — empty /stats is a regression
+                # the bare HTTP 200 check would otherwise let slip.
+                $stats = $r.Content | ConvertFrom-Json
+                $totalChunks = ($stats.corpora | Measure-Object -Property chunk_count -Sum).Sum
+                if ($totalChunks -gt 0) {
+                  Write-Host "Sidecar bound port 7777 after $i second(s); indexed $totalChunks chunks across $($stats.corpora.Count) corpora."
+                  Write-Host $r.Content
+                  $ok = $true
+                } else {
+                  $reason = "/stats responded but no chunks were indexed"
+                }
                 break
               }
             } catch {
               # not up yet
             }
+          }
+          if (-not $ok -and -not $crashed -and -not $reason) {
+            $reason = "sidecar never bound port 7777 within 60 seconds"
           }
 
           Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
@@ -84,7 +107,7 @@ jobs:
           Get-Content sidecar-err.log -ErrorAction SilentlyContinue
 
           if (-not $ok) {
-            Write-Host "FAIL: sidecar never bound port 7777." -ForegroundColor Red
+            Write-Host "FAIL: $reason" -ForegroundColor Red
             exit 1
           }
         shell: pwsh
