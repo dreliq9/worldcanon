@@ -10,7 +10,7 @@ REPO_ROOT = HERE.parent
 block_cipher = None
 
 a = Analysis(
-    [str(REPO_ROOT / "server" / "worldcanon" / "main.py")],
+    [str(HERE / "sidecar_entry.py")],
     pathex=[str(REPO_ROOT / "server")],
     binaries=[],
     datas=[
@@ -18,6 +18,7 @@ a = Analysis(
         (str(REPO_ROOT / "server" / "worldcanon" / "prompts"), "worldcanon/prompts"),
     ],
     hiddenimports=[
+        "worldcanon.main",
         "worldcanon.chunkers.prose",
         "worldcanon.chunkers.entity_sheet",
         "worldcanon.chunkers.system_sheet",

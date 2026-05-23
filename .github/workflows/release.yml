@@ -42,6 +42,16 @@ jobs:
           pyinstaller pyinstaller/importer.spec
         shell: pwsh
 
+      - name: Smoke-test built binaries
+        run: |
+          # Confirm the sidecar and importer actually boot. A broken
+          # PyInstaller config (e.g., relative-import resolution) will
+          # crash on --help here — better to fail the release than ship
+          # a binary the user can't run.
+          .\dist\worldcanon-sidecar\worldcanon-sidecar.exe --help
+          .\dist\worldcanon-import.exe --help
+        shell: pwsh
+
       - name: Assemble release folder
         run: |
           New-Item -ItemType Directory -Path dist\release -Force | Out-Null
