@@ -77,16 +77,19 @@ Use the default install location.
 1. Extract `worldcanon-windows-x64.zip`. You should see a folder containing:
    - `worldcanon-sidecar\` (a subfolder)
    - `worldcanon-import.exe`
-   - `install.ps1`
-   - `uninstall.ps1`
+   - `install.cmd` ← **the one you double-click**
+   - `install.ps1` (used by install.cmd; don't run directly)
+   - `uninstall.cmd`, `diagnose.cmd`, and their `.ps1` counterparts
    - This `INSTALL.md`
-2. Right-click `install.ps1` and choose **Run with PowerShell**.
-   - If Windows blocks the script: open PowerShell, run
-     `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`,
-     answer Y, then re-run install.ps1.
-   - If Windows SmartScreen flags the script, click **More info → Run anyway**.
+2. **Double-click `install.cmd`.** A blue PowerShell window opens.
+   - If Windows SmartScreen flags it, click **More info → Run anyway**.
+   - You should NOT need to mess with ExecutionPolicy — `install.cmd`
+     launches PowerShell with the right flags already set.
 3. When prompted, paste the path to your vault folder (e.g.,
-   `C:\Users\<you>\Documents\WorldVault`).
+   `C:\Users\<you>\Documents\WorldVault`) and press Enter.
+4. The window stays open with the result. If install succeeded, press
+   Enter to close it. If it failed, the error is right there — read it
+   or send a screenshot to Adam.
 
 The script copies the sidecar to `%LOCALAPPDATA%\WorldbuilderCanon\`, creates
 a Task Scheduler entry called `WorldbuilderCanonSidecar`, and starts it.
@@ -105,10 +108,11 @@ The plugin ships as a separate zip (`worldcanon-plugin.zip`). Extract it; you sh
 - `manifest.json`
 - `main.js`
 - `styles.css`
-- `install.ps1`
+- `install.cmd` ← double-click this
+- `install.ps1` (used by install.cmd)
 
-Right-click the plugin's `install.ps1` and Run with PowerShell. Provide the
-same vault path you used for the sidecar.
+Double-click the plugin's `install.cmd`. Paste the same vault path you
+used for the sidecar.
 
 ---
 
@@ -185,15 +189,22 @@ trash icon next to Worldbuilder Canon. Or delete
 
 ## Troubleshooting
 
-**Before troubleshooting anything else: run `diagnose.ps1`.** Right-click
-the `diagnose.ps1` file in the install zip and choose **Run with
-PowerShell**. It captures sidecar logs, the `/stats` endpoint, Ollama
-state, plugin version, and system specs into a zip on your Desktop. Send
-that zip to Adam — he can usually answer in one round-trip instead of
-playing twenty questions.
+**Before troubleshooting anything else: double-click `diagnose.cmd`** in
+the install folder (or in `%LOCALAPPDATA%\WorldbuilderCanon\` if the
+install at least started). It captures sidecar logs, the `/stats`
+endpoint, Ollama state, plugin version, and system specs into a zip on
+your Desktop. Send that zip to Adam — he can usually answer in one
+round-trip instead of playing twenty questions.
 
 The diagnose script is read-only: it doesn't restart anything or change
 any settings, and it does NOT include your story content.
+
+**A blue PowerShell window flashes open then closes immediately.**
+This means the script ran (or errored) and the window auto-closed
+before you could read it. Use `install.cmd` (double-click), not
+`install.ps1` directly — the `.cmd` wrapper holds the window open
+with the result. If you only have a v0.1.1 zip (no `.cmd` files), ask
+Adam for the v0.1.2 zip.
 
 **Status bar shows red "sidecar down".**
 The sidecar isn't running. Open Task Scheduler, find
