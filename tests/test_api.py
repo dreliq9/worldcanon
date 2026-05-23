@@ -125,3 +125,15 @@ def test_timeline_endpoint(client):
     r = client.get("/timeline")
     assert r.status_code == 200
     assert "events" in r.json()
+
+
+def test_stats_includes_llm_model(client, monkeypatch):
+    monkeypatch.setenv("WORLDCANON_LLM_MODEL", "test-model:7b")
+    body = client.get("/stats").json()
+    assert body["llm_model"] == "test-model:7b"
+
+
+def test_stats_defaults_llm_model_when_env_missing(client, monkeypatch):
+    monkeypatch.delenv("WORLDCANON_LLM_MODEL", raising=False)
+    body = client.get("/stats").json()
+    assert body["llm_model"] == "gemma3:4b"

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import re
 import sqlite3
 from pathlib import Path
@@ -115,6 +116,7 @@ def build_app(
         rel_count = con.execute("SELECT COUNT(*) FROM relationships").fetchone()[0]
         rule_count = con.execute("SELECT COUNT(*) FROM rules").fetchone()[0]
         name_count = con.execute("SELECT COUNT(*) FROM names").fetchone()[0]
+        llm_model = os.environ.get("WORLDCANON_LLM_MODEL", "gemma3:4b")
         return {
             "corpora": corpora_stats,
             "fact_count": fact_count,
@@ -122,6 +124,7 @@ def build_app(
             "rule_count": rule_count,
             "name_count": name_count,
             "embedder": embedder.name,
+            "llm_model": llm_model,
         }
 
     @app.get("/search")
