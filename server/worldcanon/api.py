@@ -507,6 +507,29 @@ def build_app(
             ) from exc
         return {"suggestions": _parse_name_suggestions(content)}
 
+    @app.get("/inbox")
+    def inbox_endpoint() -> dict[str, Any]:
+        inbox_dir = vault_root / "_inbox"
+        if not inbox_dir.exists():
+            return {"items": []}
+        items: list[dict[str, Any]] = []
+        for path in sorted(inbox_dir.rglob("*")):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(inbox_dir).as_posix()
+            try:
+                body = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            preview = body.strip().replace("\n", " ")[:200]
+            items.append({
+                "path": rel,
+                "vault_path": f"_inbox/{rel}",
+                "preview": preview,
+                "size": path.stat().st_size,
+            })
+        return {"items": items}
+
     return app
 
 
