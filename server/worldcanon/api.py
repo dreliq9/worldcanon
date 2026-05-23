@@ -565,6 +565,79 @@ def build_app(
 
         return _parse_triage_suggestion(content)
 
+    @app.get("/unlinked-mentions")
+    def unlinked_mentions(file: str) -> dict[str, Any]:
+        target = (vault_root / file).resolve()
+        try:
+            target.relative_to(vault_root.resolve())
+        except ValueError:
+            raise HTTPException(status_code=400, detail="file must be inside the vault")
+        if not target.exists() or not target.is_file():
+            raise HTTPException(status_code=404, detail=f"file not found: {file}")
+
+        body = target.read_text(encoding="utf-8", errors="replace")
+
+        names: set[str] = set()
+        for row in con.execute(
+            """SELECT metadata_json FROM chunks
+               WHERE corpus = 'entities'
+                 AND json_extract(metadata_json, '$.kind') = 'entity_sheet'""",
+        ):
+            meta = json.loads(row["metadata_json"])
+            n = meta.get("name")
+            if isinstance(n, str):
+                names.add(n)
+            for alias in meta.get("aliases") or []:
+                if isinstance(alias, str):
+                    names.add(alias)
+        if not names:
+            return {"mentions": []}
+
+        wikilink_re = re.compile(r"\[\[[^\]]+\]\]")
+        wikilink_spans: list[tuple[int, int]] = [
+            (m.start(), m.end()) for m in wikilink_re.finditer(body)
+        ]
+
+        def is_inside_wikilink(start: int, end: int) -> bool:
+            for ws, we in wikilink_spans:
+                if start >= ws and end <= we:
+                    return True
+            return False
+
+        sorted_names = sorted(names, key=len, reverse=True)
+        pattern = re.compile(
+            r"\b(" + "|".join(re.escape(n) for n in sorted_names) + r")\b"
+        )
+
+        line_starts: list[int] = [0]
+        for i, ch in enumerate(body):
+            if ch == "\n":
+                line_starts.append(i + 1)
+
+        def position(offset: int) -> tuple[int, int]:
+            line = 0
+            for i, start in enumerate(line_starts):
+                if start <= offset:
+                    line = i
+                else:
+                    break
+            col = offset - line_starts[line]
+            return line + 1, col
+
+        mentions: list[dict] = []
+        for m in pattern.finditer(body):
+            if is_inside_wikilink(m.start(), m.end()):
+                continue
+            line, col = position(m.start())
+            mentions.append({
+                "line": line,
+                "col": col,
+                "match": m.group(1),
+                "suggested_link": f"[[{m.group(1)}]]",
+            })
+
+        return {"mentions": mentions}
+
     return app
 
 
