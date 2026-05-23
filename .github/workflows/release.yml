@@ -1,0 +1,66 @@
+name: Build Windows release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install project
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\Activate.ps1
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pyinstaller>=6.0
+        shell: pwsh
+
+      - name: Build sidecar
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          pyinstaller pyinstaller/sidecar.spec
+        shell: pwsh
+
+      - name: Build importer
+        run: |
+          .\.venv\Scripts\Activate.ps1
+          pyinstaller pyinstaller/importer.spec
+        shell: pwsh
+
+      - name: Assemble release folder
+        run: |
+          New-Item -ItemType Directory -Path dist\release -Force | Out-Null
+          Copy-Item dist\worldcanon-sidecar dist\release\worldcanon-sidecar -Recurse
+          Copy-Item dist\worldcanon-import.exe dist\release\
+          Copy-Item scripts\install.ps1 dist\release\
+          Copy-Item scripts\uninstall.ps1 dist\release\
+          Copy-Item INSTALL.md dist\release\
+          Compress-Archive -Path dist\release\* -DestinationPath dist\worldcanon-windows-x64.zip
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: worldcanon-windows-x64
+          path: dist/worldcanon-windows-x64.zip
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/worldcanon-windows-x64.zip
