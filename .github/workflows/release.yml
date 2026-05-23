@@ -44,12 +44,49 @@ jobs:
 
       - name: Smoke-test built binaries
         run: |
-          # Confirm the sidecar and importer actually boot. A broken
-          # PyInstaller config (e.g., relative-import resolution) will
-          # crash on --help here — better to fail the release than ship
-          # a binary the user can't run.
-          .\dist\worldcanon-sidecar\worldcanon-sidecar.exe --help
+          # Importer is a single binary with no dependencies — --help is enough.
           .\dist\worldcanon-import.exe --help
+
+          # The sidecar's bugs hide past argparse — sqlite_vec native libs,
+          # data files like corpora.yaml, fastembed bundling. Start it
+          # against starter-vault and confirm /stats responds. Use the hash
+          # embedder so the test doesn't depend on HuggingFace reachability.
+          $env:WORLDCANON_EMBEDDER = "hash"
+          $proc = Start-Process `
+            -FilePath ".\dist\worldcanon-sidecar\worldcanon-sidecar.exe" `
+            -ArgumentList "--vault","starter-vault","--port","7777","--log-level","info" `
+            -RedirectStandardOutput sidecar-out.log `
+            -RedirectStandardError sidecar-err.log `
+            -PassThru -NoNewWindow
+
+          $ok = $false
+          for ($i = 1; $i -le 60; $i++) {
+            Start-Sleep -Seconds 1
+            try {
+              $r = Invoke-WebRequest -Uri http://127.0.0.1:7777/stats -TimeoutSec 2 -UseBasicParsing
+              if ($r.StatusCode -eq 200) {
+                Write-Host "Sidecar bound port 7777 after $i second(s)."
+                Write-Host $r.Content
+                $ok = $true
+                break
+              }
+            } catch {
+              # not up yet
+            }
+          }
+
+          Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 1
+
+          Write-Host "--- sidecar stdout ---"
+          Get-Content sidecar-out.log -ErrorAction SilentlyContinue
+          Write-Host "--- sidecar stderr ---"
+          Get-Content sidecar-err.log -ErrorAction SilentlyContinue
+
+          if (-not $ok) {
+            Write-Host "FAIL: sidecar never bound port 7777." -ForegroundColor Red
+            exit 1
+          }
         shell: pwsh
 
       - name: Assemble release folder

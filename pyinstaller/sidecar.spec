@@ -4,19 +4,27 @@
 
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_all, collect_dynamic_libs
+
 HERE = Path(SPECPATH).resolve()
 REPO_ROOT = HERE.parent
 
 block_cipher = None
 
+# sqlite_vec ships a binary extension (vec0.dll on Windows, vec0.dylib on
+# Mac, vec0.so on Linux). PyInstaller misses it unless explicitly told.
+# fastembed has model code + tokenizer data files that we also pull in.
+sqlite_vec_datas, sqlite_vec_binaries, sqlite_vec_hidden = collect_all("sqlite_vec")
+fastembed_datas, fastembed_binaries, fastembed_hidden = collect_all("fastembed")
+
 a = Analysis(
     [str(HERE / "sidecar_entry.py")],
     pathex=[str(REPO_ROOT / "server")],
-    binaries=[],
+    binaries=sqlite_vec_binaries + fastembed_binaries,
     datas=[
         (str(REPO_ROOT / "corpora.yaml"), "."),
         (str(REPO_ROOT / "server" / "worldcanon" / "prompts"), "worldcanon/prompts"),
-    ],
+    ] + sqlite_vec_datas + fastembed_datas,
     hiddenimports=[
         "worldcanon.main",
         "worldcanon.chunkers.prose",
@@ -24,9 +32,7 @@ a = Analysis(
         "worldcanon.chunkers.system_sheet",
         "worldcanon.chunkers.naming_sheet",
         "worldcanon.chunkers.journal",
-        "fastembed",
-        "sqlite_vec",
-    ],
+    ] + sqlite_vec_hidden + fastembed_hidden,
     hookspath=[],
     runtime_hooks=[],
     excludes=[

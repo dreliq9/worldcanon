@@ -34,6 +34,16 @@ def _default_db_path() -> Path:
     return Path.home() / ".worldcanon" / "index.sqlite"
 
 
+def _default_corpora_path() -> Path:
+    # In a PyInstaller bundle, sys._MEIPASS points at the bundle's data
+    # root (_internal/ in onedir mode). corpora.yaml is shipped there.
+    # In a source checkout, walk up from this file to the repo root.
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        return Path(bundle_root) / "corpora.yaml"
+    return Path(__file__).resolve().parents[2] / "corpora.yaml"
+
+
 def _require_loopback(host: str) -> str:
     try:
         addr = ipaddress.ip_address(host)
@@ -51,7 +61,7 @@ def _require_loopback(host: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Worldbuilder Canon sidecar")
     parser.add_argument("--vault", required=True, help="Path to the Obsidian vault root")
-    parser.add_argument("--corpora", default=str(Path(__file__).resolve().parents[2] / "corpora.yaml"))
+    parser.add_argument("--corpora", default=str(_default_corpora_path()))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=7777)
     parser.add_argument("--db", default=str(_default_db_path()))
