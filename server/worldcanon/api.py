@@ -88,6 +88,10 @@ class TriageSuggestRequest(BaseModel):
     path: str = Field(..., min_length=1)
 
 
+class RenameRequest(BaseModel):
+    new_name: str = Field(..., min_length=1)
+
+
 def build_app(
     *,
     con: sqlite3.Connection,
@@ -637,6 +641,90 @@ def build_app(
             })
 
         return {"mentions": mentions}
+
+    @app.post("/entity/{name}/rename")
+    def rename_entity(name: str, req: RenameRequest) -> dict[str, Any]:
+        new_name = req.new_name.strip()
+        if not new_name:
+            raise HTTPException(status_code=422, detail="new_name must not be empty")
+
+        sheet_row = con.execute(
+            """SELECT * FROM chunks
+               WHERE corpus = 'entities'
+                 AND json_extract(metadata_json, '$.kind') = 'entity_sheet'
+                 AND json_extract(metadata_json, '$.name') = ?
+               LIMIT 1""",
+            (name,),
+        ).fetchone()
+        if sheet_row is None:
+            raise HTTPException(status_code=404, detail=f"entity not found: {name}")
+
+        entity_file = f"entities/{sheet_row['source_path']}"
+        old_basename = name + ".md"
+        new_basename = new_name + ".md"
+        new_entity_file = entity_file.replace(old_basename, new_basename)
+
+        wikilink_re = re.compile(r"\[\[[^\]]+\]\]")
+        name_re = re.compile(r"\b" + re.escape(name) + r"\b")
+        plain_rewrites: list[dict] = []
+        for prose_dir in ("canon", "drafts"):
+            for path in (vault_root / prose_dir).rglob("*.md"):
+                rel = path.relative_to(vault_root).as_posix()
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except OSError:
+                    continue
+                wiki_spans = [(m.start(), m.end()) for m in wikilink_re.finditer(text)]
+                line_starts: list[int] = [0]
+                for i, ch in enumerate(text):
+                    if ch == "\n":
+                        line_starts.append(i + 1)
+                for m in name_re.finditer(text):
+                    if any(m.start() >= ws and m.end() <= we for ws, we in wiki_spans):
+                        continue
+                    line = 0
+                    for i, start in enumerate(line_starts):
+                        if start <= m.start():
+                            line = i
+                        else:
+                            break
+                    col = m.start() - line_starts[line]
+                    plain_rewrites.append({
+                        "file": rel,
+                        "line": line + 1,
+                        "col": col,
+                        "old": name,
+                        "new": new_name,
+                    })
+
+        alias_updates: list[dict] = []
+        for row in con.execute(
+            """SELECT source_path, body, metadata_json FROM chunks
+               WHERE corpus = 'entities'
+                 AND json_extract(metadata_json, '$.kind') = 'entity_sheet'""",
+        ):
+            other_file = f"entities/{row['source_path']}"
+            if other_file == entity_file:
+                continue
+            other_text = (vault_root / other_file).read_text(
+                encoding="utf-8", errors="replace",
+            )
+            if name in other_text:
+                alias_updates.append({
+                    "file": other_file,
+                    "kind": "reference",
+                    "old_value": name,
+                    "new_value": new_name,
+                })
+
+        return {
+            "old_name": name,
+            "new_name": new_name,
+            "entity_file": entity_file,
+            "new_entity_file": new_entity_file,
+            "plain_text_rewrites": plain_rewrites,
+            "alias_updates": alias_updates,
+        }
 
     return app
 
