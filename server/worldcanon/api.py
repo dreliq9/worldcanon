@@ -35,6 +35,7 @@ from .prompts import (
     render_ideation_response,
     render_fact_extraction,
     render_name_suggest,
+    render_triage_suggest,
 )
 from .registry import CorpusConfig
 from .search import search
@@ -80,6 +81,10 @@ class NameSuggestRequest(BaseModel):
     role: str | None = None
     vibe: str | None = None
     count: int = 5
+
+
+class TriageSuggestRequest(BaseModel):
+    path: str = Field(..., min_length=1)
 
 
 def build_app(
@@ -530,6 +535,33 @@ def build_app(
             })
         return {"items": items}
 
+    @app.post("/triage-suggest")
+    def triage_suggest(req: TriageSuggestRequest) -> dict[str, Any]:
+        inbox_dir = (vault_root / "_inbox").resolve()
+        target = (inbox_dir / req.path).resolve()
+        try:
+            target.relative_to(inbox_dir)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="path must be inside _inbox/")
+        if not target.exists() or not target.is_file():
+            raise HTTPException(status_code=404, detail=f"file not found: {req.path}")
+
+        body = target.read_text(encoding="utf-8", errors="replace")
+        prompt = render_triage_suggest(filename=req.path, content=body)
+        try:
+            content = llm.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=None,
+                response_format="json",
+            )
+        except LLMUnavailableError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={"status": "llm_unavailable", "reason": str(exc)},
+            ) from exc
+
+        return _parse_triage_suggestion(content)
+
     return app
 
 
@@ -675,3 +707,40 @@ def _parse_name_suggestions(content: str) -> list[dict]:
             "reasoning": str(s.get("reasoning", "")),
         })
     return out
+
+
+_VALID_CLASSIFICATIONS = {
+    "canon", "drafts", "research", "discard",
+    "entities/characters", "entities/places", "entities/factions",
+    "entities/items", "entities/events",
+}
+
+
+def _parse_triage_suggestion(content: str) -> dict:
+    """Lenient parse with fallback to drafts/low when the LLM goes off-script."""
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n", "", text)
+        text = re.sub(r"\n```\s*$", "", text)
+    start = text.find("{")
+    end = text.rfind("}")
+    fallback = {"classification": "drafts", "confidence": "low",
+                "reasoning": "could not parse LLM response"}
+    if start == -1 or end == -1 or end < start:
+        return fallback
+    try:
+        data = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return fallback
+    if not isinstance(data, dict):
+        return fallback
+    cls = data.get("classification")
+    if not isinstance(cls, str) or cls not in _VALID_CLASSIFICATIONS:
+        return fallback
+    conf = data.get("confidence")
+    if conf not in {"high", "medium", "low"}:
+        conf = "low"
+    reasoning = data.get("reasoning")
+    if not isinstance(reasoning, str):
+        reasoning = ""
+    return {"classification": cls, "confidence": conf, "reasoning": reasoning.strip()}
