@@ -78,6 +78,8 @@ def _apply_output(con, output: ChunkerOutput, corpus: str, rel: str, embedder: E
         facts_by_entity.setdefault(f.entity, []).append({
             "claim": f.claim, "status": f.status,
             "introduced_in": f.introduced_in, "chapter_index": f.chapter_index,
+            "player_visibility": f.player_visibility,
+            "revealed_in_session": f.revealed_in_session,
         })
     for entity, facts in facts_by_entity.items():
         sync_facts_for_file(con, entity=entity, source_file=rel, facts=facts)

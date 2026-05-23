@@ -12,18 +12,28 @@ import time
 from typing import Any
 
 
+def _add_column_if_missing(
+    con: sqlite3.Connection, table: str, column: str, ddl: str
+) -> None:
+    cols = {row[1] for row in con.execute(f"PRAGMA table_info({table})")}
+    if column not in cols:
+        con.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
 def install_ledger_schema(con: sqlite3.Connection) -> None:
     con.executescript(
         """
         CREATE TABLE IF NOT EXISTS facts (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            entity          TEXT NOT NULL,
-            claim           TEXT NOT NULL,
-            status          TEXT NOT NULL,
-            introduced_in   TEXT NOT NULL,
-            chapter_index   INTEGER,
-            source_file     TEXT NOT NULL,
-            created         INTEGER NOT NULL,
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            entity                TEXT NOT NULL,
+            claim                 TEXT NOT NULL,
+            status                TEXT NOT NULL,
+            introduced_in         TEXT NOT NULL,
+            chapter_index         INTEGER,
+            source_file           TEXT NOT NULL,
+            created               INTEGER NOT NULL,
+            player_visibility     TEXT NOT NULL DEFAULT 'revealed',
+            revealed_in_session   INTEGER,
             UNIQUE(entity, claim, source_file)
         );
         CREATE INDEX IF NOT EXISTS idx_facts_entity ON facts(entity);
@@ -77,11 +87,35 @@ def install_ledger_schema(con: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_names_culture ON names(culture);
         """
     )
+    # Backfill columns added in later releases for vaults whose index
+    # predates the schema change. Index follows so it can reference the
+    # column whether the table was just created or has just been altered.
+    _add_column_if_missing(
+        con, "facts", "player_visibility",
+        "player_visibility TEXT NOT NULL DEFAULT 'revealed'",
+    )
+    _add_column_if_missing(
+        con, "facts", "revealed_in_session",
+        "revealed_in_session INTEGER",
+    )
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_facts_visibility ON facts(player_visibility)"
+    )
     con.commit()
 
 
 def _now() -> int:
     return int(time.time())
+
+
+def _row_get(row: sqlite3.Row, key: str, default: Any) -> Any:
+    """sqlite3.Row supports KeyError-on-miss only; this returns a default
+    when the column doesn't exist in the row (e.g., after a partial
+    migration where columns were just added)."""
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
 
 
 def sync_facts_for_file(
@@ -113,13 +147,17 @@ def sync_facts_for_file(
         status = f.get("status", "draft")
         introduced_in = f.get("introduced_in", source_file)
         chapter_index = f.get("chapter_index")
+        player_visibility = f.get("player_visibility", "revealed")
+        revealed_in_session = f.get("revealed_in_session")
         prev = existing.get(claim)
         if prev is None:
             con.execute(
                 """INSERT INTO facts (entity, claim, status, introduced_in,
-                   chapter_index, source_file, created)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (entity, claim, status, introduced_in, chapter_index, source_file, now),
+                   chapter_index, source_file, created,
+                   player_visibility, revealed_in_session)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (entity, claim, status, introduced_in, chapter_index,
+                 source_file, now, player_visibility, revealed_in_session),
             )
             con.execute(
                 """INSERT INTO fact_history (entity, claim, event, from_status,
@@ -128,11 +166,17 @@ def sync_facts_for_file(
                 (entity, claim, status, source_file, now),
             )
         else:
+            visibility_changed = (
+                _row_get(prev, "player_visibility", "revealed") != player_visibility
+                or _row_get(prev, "revealed_in_session", None) != revealed_in_session
+            )
             if prev["status"] != status:
                 con.execute(
-                    """UPDATE facts SET status = ?, introduced_in = ?, chapter_index = ?
+                    """UPDATE facts SET status = ?, introduced_in = ?, chapter_index = ?,
+                       player_visibility = ?, revealed_in_session = ?
                        WHERE id = ?""",
-                    (status, introduced_in, chapter_index, prev["id"]),
+                    (status, introduced_in, chapter_index,
+                     player_visibility, revealed_in_session, prev["id"]),
                 )
                 con.execute(
                     """INSERT INTO fact_history (entity, claim, event, from_status,
@@ -140,11 +184,17 @@ def sync_facts_for_file(
                        VALUES (?, ?, 'status_change', ?, ?, ?, ?)""",
                     (entity, claim, prev["status"], status, source_file, now),
                 )
-            elif prev["introduced_in"] != introduced_in or prev["chapter_index"] != chapter_index:
+            elif (
+                prev["introduced_in"] != introduced_in
+                or prev["chapter_index"] != chapter_index
+                or visibility_changed
+            ):
                 con.execute(
-                    """UPDATE facts SET introduced_in = ?, chapter_index = ?
+                    """UPDATE facts SET introduced_in = ?, chapter_index = ?,
+                       player_visibility = ?, revealed_in_session = ?
                        WHERE id = ?""",
-                    (introduced_in, chapter_index, prev["id"]),
+                    (introduced_in, chapter_index,
+                     player_visibility, revealed_in_session, prev["id"]),
                 )
                 con.execute(
                     """INSERT INTO fact_history (entity, claim, event, from_status,
@@ -164,12 +214,20 @@ def sync_facts_for_file(
     con.commit()
 
 
+# Visibility levels a player is allowed to see. Excludes 'secret'. Hinted
+# and red_herring both surface — the caller marks them appropriately in
+# the UI.
+PLAYER_VISIBLE = ("revealed", "hinted", "red_herring")
+
+
 def list_facts(
     con: sqlite3.Connection,
     *,
     entity: str | None = None,
     chapter_max: int | None = None,
     status: str | None = None,
+    view: str = "gm",
+    player_visibility: str | None = None,
 ) -> list[dict]:
     sql = "SELECT * FROM facts WHERE 1=1"
     args: list[Any] = []
@@ -182,6 +240,13 @@ def list_facts(
     if status is not None:
         sql += " AND status = ?"
         args.append(status)
+    if player_visibility is not None:
+        sql += " AND player_visibility = ?"
+        args.append(player_visibility)
+    elif view == "player":
+        placeholders = ",".join("?" for _ in PLAYER_VISIBLE)
+        sql += f" AND player_visibility IN ({placeholders})"
+        args.extend(PLAYER_VISIBLE)
     return [dict(row) for row in con.execute(sql, args)]
 
 

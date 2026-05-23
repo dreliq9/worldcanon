@@ -9,7 +9,8 @@ from worldcanon.store import Chunk, ChunkRow, open_store, upsert_chunk, get_chun
 
 @pytest.fixture
 def tmp_store(tmp_path):
-    con = open_store(tmp_path / "t.sqlite", dim=4)
+    store = open_store(tmp_path / "t.sqlite", dim=4)
+    con = store.connection()
     yield con
     con.close()
 

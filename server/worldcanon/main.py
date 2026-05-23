@@ -7,6 +7,7 @@ FastAPI app on a local port.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import logging
 import os
 import signal
@@ -33,6 +34,20 @@ def _default_db_path() -> Path:
     return Path.home() / ".worldcanon" / "index.sqlite"
 
 
+def _require_loopback(host: str) -> str:
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise SystemExit(
+            f"--host must be a loopback IP literal (127.0.0.1 or ::1), got {host!r}"
+        ) from exc
+    if not addr.is_loopback:
+        raise SystemExit(
+            f"--host must be a loopback address; {host} is reachable off-host"
+        )
+    return host
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Worldbuilder Canon sidecar")
     parser.add_argument("--vault", required=True, help="Path to the Obsidian vault root")
@@ -42,6 +57,8 @@ def main() -> None:
     parser.add_argument("--db", default=str(_default_db_path()))
     parser.add_argument("--log-level", default="info")
     args = parser.parse_args()
+
+    host = _require_loopback(args.host)
 
     logging.basicConfig(
         level=args.log_level.upper(),
@@ -58,30 +75,30 @@ def main() -> None:
 
     embedder = build_embedder()
     llm = build_llm_backend()
-    con = open_store(db_path, dim=embedder.dim, check_same_thread=False)
-    install_ledger_schema(con)
-    install_ideation_schema(con)
+    store = open_store(db_path, dim=embedder.dim)
+    install_ledger_schema(store.connection())
+    install_ideation_schema(store.connection())
     cfgs = load_registry(args.corpora, vault_root=vault)
 
     log.info("opportunistic index sweep starting (vault=%s)", vault)
     for cfg in cfgs:
-        stats = full_index_corpus(con, cfg, embedder)
+        stats = full_index_corpus(store.connection(), cfg, embedder)
         log.info("indexed corpus %s: %s", cfg.name, stats)
 
-    watcher = VaultWatcher(con=con, embedder=embedder, cfgs=cfgs, vault_root=vault)
+    watcher = VaultWatcher(store=store, embedder=embedder, cfgs=cfgs, vault_root=vault)
     watcher.start()
     log.info("watcher started")
 
-    app = build_app(con=con, embedder=embedder, cfgs=cfgs, llm=llm, vault_root=vault)
+    app = build_app(store=store, embedder=embedder, cfgs=cfgs, llm=llm, vault_root=vault)
 
     def _shutdown(*_):
         log.info("shutting down")
         watcher.stop()
-        con.close()
+        store.close()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _shutdown)
 
-    uvicorn.run(app, host=args.host, port=args.port, log_level=args.log_level)
+    uvicorn.run(app, host=host, port=args.port, log_level=args.log_level)

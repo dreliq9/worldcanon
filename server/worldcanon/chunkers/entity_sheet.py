@@ -25,6 +25,17 @@ from ..store import Chunk
 WIKILINK = re.compile(r"\[\[([^\]|#]+?)(?:\|[^\]]+)?\]\]")
 SECTION = re.compile(r"^##\s+", re.MULTILINE)
 
+_ALLOWED_VISIBILITY = {"secret", "revealed", "hinted", "red_herring"}
+
+
+def _coerce_visibility(value: object) -> str:
+    """Sheets authored without TTRPG awareness omit this field; treat as
+    fully revealed. Unknown strings collapse to 'revealed' so a typo never
+    accidentally hides content from the GM."""
+    if isinstance(value, str) and value in _ALLOWED_VISIBILITY:
+        return value
+    return "revealed"
+
 
 def _strip_sections(body: str) -> str:
     """Return body with `## Facts` / `## Relationships` sections removed."""
@@ -101,6 +112,8 @@ def chunk_entity_sheet_file(
             introduced_in=f.get("introduced_in", rel),
             chapter_index=f.get("chapter_index"),
             source_file=rel,
+            player_visibility=_coerce_visibility(f.get("player_visibility")),
+            revealed_in_session=f.get("revealed_in_session"),
         )
         for f in parse_facts(body)
         if f.get("claim")

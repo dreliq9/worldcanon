@@ -16,10 +16,11 @@ from worldcanon.ledger import (
 
 @pytest.fixture
 def con(tmp_path):
-    c = open_store(tmp_path / "t.sqlite", dim=4)
+    store = open_store(tmp_path / "t.sqlite", dim=4)
+    c = store.connection()
     install_ledger_schema(c)
     yield c
-    c.close()
+    store.close()
 
 
 def test_sync_facts_inserts(con):

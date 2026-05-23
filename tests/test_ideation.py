@@ -13,10 +13,11 @@ from worldcanon.store import open_store
 
 @pytest.fixture
 def con(tmp_path):
-    c = open_store(tmp_path / "t.sqlite", dim=4)
+    store = open_store(tmp_path / "t.sqlite", dim=4)
+    c = store.connection()
     install_ideation_schema(c)
     yield c
-    c.close()
+    store.close()
 
 
 def test_start_session_returns_id(con):

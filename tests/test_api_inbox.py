@@ -26,11 +26,12 @@ def _build_client(tmp_path):
         "research notes about something.", encoding="utf-8")
 
     embedder = HashEmbedBackend(dim=32)
-    con = open_store(tmp_path / "t.sqlite", dim=embedder.dim, check_same_thread=False)
+    store = open_store(tmp_path / "t.sqlite", dim=embedder.dim)
+    con = store.connection()
     install_ledger_schema(con)
     install_ideation_schema(con)
     cfgs = load_registry(REPO / "corpora.yaml", vault_root=vault)
-    app = build_app(con=con, embedder=embedder, cfgs=cfgs,
+    app = build_app(store=store, embedder=embedder, cfgs=cfgs,
                     llm=StubBackend(responses=[]), vault_root=vault)
     return TestClient(app), vault
 
@@ -57,11 +58,12 @@ def test_inbox_empty_when_no_files(tmp_path):
     vault = tmp_path / "empty_vault"
     (vault / "_inbox").mkdir(parents=True)
     embedder = HashEmbedBackend(dim=32)
-    con = open_store(tmp_path / "empty.sqlite", dim=embedder.dim, check_same_thread=False)
+    store = open_store(tmp_path / "empty.sqlite", dim=embedder.dim)
+    con = store.connection()
     install_ledger_schema(con)
     install_ideation_schema(con)
     cfgs = load_registry(REPO / "corpora.yaml", vault_root=vault)
-    app = build_app(con=con, embedder=embedder, cfgs=cfgs,
+    app = build_app(store=store, embedder=embedder, cfgs=cfgs,
                     llm=StubBackend(responses=[]), vault_root=vault)
     client = TestClient(app)
     body = client.get("/inbox").json()

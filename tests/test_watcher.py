@@ -23,16 +23,17 @@ def vault_setup(tmp_path):
     )
 
     embedder = HashEmbedBackend(dim=32)
-    con = open_store(tmp_path / "t.sqlite", dim=embedder.dim, check_same_thread=False)
+    store = open_store(tmp_path / "t.sqlite", dim=embedder.dim)
+    con = store.connection()
     install_ledger_schema(con)
     cfgs = load_registry(REPO / "corpora.yaml", vault_root=vault)
-    yield vault, con, embedder, cfgs
-    con.close()
+    yield vault, store, con, embedder, cfgs
+    store.close()
 
 
 def test_watcher_picks_up_new_file(vault_setup):
-    vault, con, embedder, cfgs = vault_setup
-    watcher = VaultWatcher(con=con, embedder=embedder, cfgs=cfgs, vault_root=vault)
+    vault, store, con, embedder, cfgs = vault_setup
+    watcher = VaultWatcher(store=store, embedder=embedder, cfgs=cfgs, vault_root=vault)
     watcher.start()
     try:
         (vault / "entities" / "characters" / "Lira.md").write_text(
@@ -49,13 +50,13 @@ def test_watcher_picks_up_new_file(vault_setup):
 
 
 def test_watcher_picks_up_modification(vault_setup):
-    vault, con, embedder, cfgs = vault_setup
+    vault, store, con, embedder, cfgs = vault_setup
     from worldcanon.indexer import full_index_corpus
     for cfg in cfgs:
         full_index_corpus(con, cfg, embedder)
     assert len(list_facts(con, entity="Aerin")) == 1
 
-    watcher = VaultWatcher(con=con, embedder=embedder, cfgs=cfgs, vault_root=vault)
+    watcher = VaultWatcher(store=store, embedder=embedder, cfgs=cfgs, vault_root=vault)
     watcher.start()
     try:
         (vault / "entities" / "characters" / "Aerin.md").write_text(

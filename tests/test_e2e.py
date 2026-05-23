@@ -23,12 +23,13 @@ FIXTURE_VAULT = Path(__file__).parent / "fixtures" / "sample_vault"
 @pytest.fixture
 def client(tmp_path):
     embedder = HashEmbedBackend(dim=32)
-    con = open_store(tmp_path / "t.sqlite", dim=embedder.dim, check_same_thread=False)
+    store = open_store(tmp_path / "t.sqlite", dim=embedder.dim)
+    con = store.connection()
     install_ledger_schema(con)
     cfgs = load_registry(REPO / "corpora.yaml", vault_root=FIXTURE_VAULT)
     for cfg in cfgs:
         full_index_corpus(con, cfg, embedder)
-    yield TestClient(build_app(con=con, embedder=embedder, cfgs=cfgs, llm=StubBackend(responses=[]), vault_root=FIXTURE_VAULT))
+    yield TestClient(build_app(store=store, embedder=embedder, cfgs=cfgs, llm=StubBackend(responses=[]), vault_root=FIXTURE_VAULT))
     con.close()
 
 

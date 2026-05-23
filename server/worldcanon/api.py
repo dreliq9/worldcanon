@@ -9,7 +9,6 @@ import datetime
 import json
 import os
 import re
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +39,7 @@ from .prompts import (
 )
 from .registry import CorpusConfig
 from .search import search
+from .store import Store
 
 
 _WIKILINK = re.compile(r"\[\[([^\]|#]+?)(?:\|[^\]]+)?(?:#[^\]]+)?\]\]")
@@ -92,9 +92,21 @@ class RenameRequest(BaseModel):
     new_name: str = Field(..., min_length=1)
 
 
+def _llm_unavailable(exc: LLMUnavailableError) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail={
+            "status": "llm_unavailable",
+            "reason": str(exc),
+            "code": getattr(exc, "code", "unknown"),
+            "hint": getattr(exc, "hint", ""),
+        },
+    )
+
+
 def build_app(
     *,
-    con: sqlite3.Connection,
+    store: Store,
     embedder: Embedder,
     cfgs: list[CorpusConfig],
     llm: LLMBackend,
@@ -104,6 +116,7 @@ def build_app(
 
     @app.get("/stats")
     def stats() -> dict[str, Any]:
+        con = store.connection()
         corpora_stats: list[dict] = []
         for cfg in cfgs:
             row = con.execute(
@@ -137,12 +150,14 @@ def build_app(
         corpus: str | None = None,
         limit: int = 10,
     ) -> dict[str, Any]:
+        con = store.connection()
         corpus_list = [c.strip() for c in corpus.split(",")] if corpus else None
         results = search(con, embedder, query=q, corpus=corpus_list, limit=limit)
         return {"results": results}
 
     @app.get("/entity/{name}")
-    def entity_endpoint(name: str) -> dict[str, Any]:
+    def entity_endpoint(name: str, view: str = "gm") -> dict[str, Any]:
+        con = store.connection()
         row = con.execute(
             """SELECT * FROM chunks
                WHERE corpus = 'entities'
@@ -153,7 +168,7 @@ def build_app(
         ).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail=f"entity not found: {name}")
-        facts = list_facts(con, entity=name)
+        facts = list_facts(con, entity=name, view=view)
         rels = list_relationships(con, entity=name)
         mentions = []
         like = f"%[[{name}]]%"
@@ -183,19 +198,57 @@ def build_app(
         entity: str | None = None,
         status: str | None = None,
         chapter_max: int | None = None,
+        view: str = "gm",
     ) -> dict[str, Any]:
+        con = store.connection()
         return {
             "facts": list_facts(
                 con, entity=entity, status=status, chapter_max=chapter_max,
+                view=view,
             )
+        }
+
+    @app.get("/export/player-wiki")
+    def export_player_wiki() -> dict[str, Any]:
+        """Return one player-safe entry per entity. The plugin writes these
+        to disk as markdown files the GM can share with players.
+
+        Each entry includes the sheet's name + intro prose body + facts
+        filtered to player_visibility != 'secret'. Red herrings appear (the
+        player believes them); the GM's redacted view stays in the vault."""
+        con = store.connection()
+        entries: list[dict[str, Any]] = []
+        for row in con.execute(
+            """SELECT * FROM chunks
+               WHERE corpus = 'entities'
+                 AND json_extract(metadata_json, '$.kind') = 'entity_sheet'
+               ORDER BY json_extract(metadata_json, '$.name')""",
+        ):
+            meta = json.loads(row["metadata_json"])
+            name = meta.get("name") or row["title"]
+            player_facts = list_facts(con, entity=name, view="player")
+            entries.append({
+                "name": name,
+                "source_path": row["source_path"],
+                "title": row["title"],
+                "body": row["body"],
+                "metadata": meta,
+                "facts": player_facts,
+            })
+        return {
+            "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+            "entry_count": len(entries),
+            "entries": entries,
         }
 
     @app.get("/relationships")
     def relationships_endpoint(entity: str | None = None) -> dict[str, Any]:
+        con = store.connection()
         return {"relationships": list_relationships(con, entity=entity)}
 
     @app.get("/system/{name}")
     def system_endpoint(name: str) -> dict[str, Any]:
+        con = store.connection()
         row = con.execute(
             """SELECT * FROM chunks
                WHERE corpus = 'systems'
@@ -218,6 +271,7 @@ def build_app(
 
     @app.get("/timeline")
     def timeline_endpoint(range: str | None = None) -> dict[str, Any]:
+        con = store.connection()
         events: list[dict] = []
         for row in con.execute(
             "SELECT * FROM facts WHERE chapter_index IS NOT NULL ORDER BY chapter_index"
@@ -246,6 +300,7 @@ def build_app(
 
     @app.post("/ask")
     def ask_endpoint(req: AskRequest) -> dict[str, Any]:
+        con = store.connection()
         if not req.question.strip():
             raise HTTPException(status_code=422, detail="question must not be empty")
         hits = search(con, embedder, query=req.question, corpus=req.corpus, limit=req.limit)
@@ -256,15 +311,13 @@ def build_app(
                 model=None,
             )
         except LLMUnavailableError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={"status": "llm_unavailable", "reason": str(exc)},
-            ) from exc
+            raise _llm_unavailable(exc) from exc
         citations = sorted({h["source_path"] for h in hits})
         return {"answer": content, "citations": citations, "hits": hits}
 
     @app.post("/contradiction-check")
     def contradiction_check(req: ContradictionRequest) -> dict[str, Any]:
+        con = store.connection()
         if req.entities is not None:
             entity_names = list(dict.fromkeys(req.entities))
         else:
@@ -288,16 +341,14 @@ def build_app(
                     response_format="json",
                 )
             except LLMUnavailableError as exc:
-                raise HTTPException(
-                    status_code=503,
-                    detail={"status": "llm_unavailable", "reason": str(exc)},
-                ) from exc
+                raise _llm_unavailable(exc) from exc
             for item in _parse_contradictions(content):
                 findings.append({"entity": entity, **item})
         return {"findings": findings}
 
     @app.post("/ideation/start")
     def ideation_start(req: IdeationStartRequest) -> dict[str, Any]:
+        con = store.connection()
         sheet_row = con.execute(
             """SELECT * FROM chunks
                WHERE corpus = 'entities'
@@ -341,10 +392,7 @@ def build_app(
                 model=None,
             )
         except LLMUnavailableError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={"status": "llm_unavailable", "reason": str(exc)},
-            ) from exc
+            raise _llm_unavailable(exc) from exc
 
         question = question.strip()
         append_turn(con, sid, role="ai", content=question)
@@ -352,6 +400,7 @@ def build_app(
 
     @app.post("/ideation/{session_id}/respond")
     def ideation_respond(session_id: str, req: IdeationRespondRequest) -> dict[str, Any]:
+        con = store.connection()
         try:
             state = get_session(con, session_id)
         except SessionNotFoundError:
@@ -378,10 +427,7 @@ def build_app(
                 response_format="json",
             )
         except LLMUnavailableError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={"status": "llm_unavailable", "reason": str(exc)},
-            ) from exc
+            raise _llm_unavailable(exc) from exc
 
         parsed = _parse_ideation_response(content)
         next_q = parsed.get("next_question")
@@ -407,10 +453,7 @@ def build_app(
                 response_format="json",
             )
         except LLMUnavailableError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={"status": "llm_unavailable", "reason": str(exc)},
-            ) from exc
+            raise _llm_unavailable(exc) from exc
         return {"proposed_facts": _parse_proposed_facts(content)}
 
     @app.post("/capture")
@@ -429,6 +472,7 @@ def build_app(
 
     @app.get("/unprocessed-brainstorm")
     def unprocessed_brainstorm() -> dict[str, Any]:
+        con = store.connection()
         rows = con.execute(
             """SELECT chunk_id, source_path, body, metadata_json, mtime
                FROM chunks
@@ -453,6 +497,7 @@ def build_app(
 
     @app.get("/name/cultures")
     def name_cultures() -> dict[str, Any]:
+        con = store.connection()
         rows = con.execute(
             """SELECT culture, status, COUNT(*) AS n
                FROM names
@@ -471,6 +516,7 @@ def build_app(
 
     @app.post("/name/suggest")
     def name_suggest(req: NameSuggestRequest) -> dict[str, Any]:
+        con = store.connection()
         sheet_row = con.execute(
             """SELECT * FROM chunks
                WHERE corpus = 'naming'
@@ -513,14 +559,12 @@ def build_app(
                 response_format="json",
             )
         except LLMUnavailableError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={"status": "llm_unavailable", "reason": str(exc)},
-            ) from exc
+            raise _llm_unavailable(exc) from exc
         return {"suggestions": _parse_name_suggestions(content)}
 
     @app.get("/inbox")
     def inbox_endpoint() -> dict[str, Any]:
+        con = store.connection()
         inbox_dir = vault_root / "_inbox"
         if not inbox_dir.exists():
             return {"items": []}
@@ -544,6 +588,7 @@ def build_app(
 
     @app.post("/triage-suggest")
     def triage_suggest(req: TriageSuggestRequest) -> dict[str, Any]:
+        con = store.connection()
         inbox_dir = (vault_root / "_inbox").resolve()
         target = (inbox_dir / req.path).resolve()
         try:
@@ -562,15 +607,13 @@ def build_app(
                 response_format="json",
             )
         except LLMUnavailableError as exc:
-            raise HTTPException(
-                status_code=503,
-                detail={"status": "llm_unavailable", "reason": str(exc)},
-            ) from exc
+            raise _llm_unavailable(exc) from exc
 
         return _parse_triage_suggestion(content)
 
     @app.get("/unlinked-mentions")
     def unlinked_mentions(file: str) -> dict[str, Any]:
+        con = store.connection()
         target = (vault_root / file).resolve()
         try:
             target.relative_to(vault_root.resolve())
@@ -644,6 +687,7 @@ def build_app(
 
     @app.post("/entity/{name}/rename")
     def rename_entity(name: str, req: RenameRequest) -> dict[str, Any]:
+        con = store.connection()
         new_name = req.new_name.strip()
         if not new_name:
             raise HTTPException(status_code=422, detail="new_name must not be empty")
@@ -660,9 +704,8 @@ def build_app(
             raise HTTPException(status_code=404, detail=f"entity not found: {name}")
 
         entity_file = f"entities/{sheet_row['source_path']}"
-        old_basename = name + ".md"
         new_basename = new_name + ".md"
-        new_entity_file = entity_file.replace(old_basename, new_basename)
+        new_entity_file = Path(entity_file).with_name(new_basename).as_posix()
 
         wikilink_re = re.compile(r"\[\[[^\]]+\]\]")
         name_re = re.compile(r"\b" + re.escape(name) + r"\b")
@@ -706,9 +749,13 @@ def build_app(
             other_file = f"entities/{row['source_path']}"
             if other_file == entity_file:
                 continue
-            other_text = (vault_root / other_file).read_text(
-                encoding="utf-8", errors="replace",
-            )
+            try:
+                other_text = (vault_root / other_file).read_text(
+                    encoding="utf-8", errors="replace",
+                )
+            except OSError:
+                # Sheet file moved or deleted between index and rename — skip.
+                continue
             if name in other_text:
                 alias_updates.append({
                     "file": other_file,

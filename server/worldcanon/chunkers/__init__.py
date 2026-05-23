@@ -24,6 +24,11 @@ class Fact:
     introduced_in: str
     chapter_index: int | None
     source_file: str  # the entity sheet this fact lives in
+    # TTRPG-aware spoiler control. For non-TTRPG vaults, both fields are
+    # ignored and the defaults give "everyone can see everything" behavior.
+    # See docs/plans/2026-05-22-ttrpg-roadmap.md for the broader design.
+    player_visibility: str = "revealed"   # secret | revealed | hinted | red_herring
+    revealed_in_session: int | None = None
 
 
 @dataclass

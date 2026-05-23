@@ -21,6 +21,35 @@ def test_brainstorm_template_includes_frontmatter():
     assert "A wild idea." in out
 
 
+def test_brainstorm_template_escapes_newline_in_entity_name():
+    out = brainstorm_template(
+        date="2026-05-22T14:30:00",
+        body="x",
+        source="webhook",
+        entities=["Villain\nmalicious_key: injected"],
+        topics=[],
+    )
+    parts = out.split("---", 2)
+    meta = yaml.safe_load(parts[1])
+    assert meta["entities_mentioned"] == ["Villain\nmalicious_key: injected"]
+    assert "malicious_key" not in meta
+    assert meta.get("status") == "unprocessed"
+
+
+def test_brainstorm_template_escapes_yaml_break_in_source():
+    out = brainstorm_template(
+        date="2026-05-22T14:30:00",
+        body="x",
+        source="evil: value\nstatus: pwned",
+        entities=[],
+        topics=[],
+    )
+    parts = out.split("---", 2)
+    meta = yaml.safe_load(parts[1])
+    assert meta["source"] == "evil: value\nstatus: pwned"
+    assert meta["status"] == "unprocessed"
+
+
 def test_brainstorm_template_empty_lists_serialize_inline():
     out = brainstorm_template(
         date="2026-05-22T14:30:00",

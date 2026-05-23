@@ -3,12 +3,19 @@
 Schema:
 - chunks: text + metadata, keyed by chunk_id
 - chunks_vec (sqlite-vec virtual): vector embeddings, keyed by rowid
+
+Concurrency model: `Store` hands out one sqlite3.Connection per OS thread via
+`threading.local()`. Callers that need to run SQL grab one via
+`store.connection()` at the point of use — never store it across thread
+boundaries. sqlite itself serializes writes at the file level, so concurrent
+writers from different threads are safe.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,15 +51,38 @@ class ChunkRow:
     indexed_at: int
 
 
-def open_store(path: str | Path, dim: int, check_same_thread: bool = True) -> sqlite3.Connection:
-    con = sqlite3.connect(str(path), check_same_thread=check_same_thread)
-    con.row_factory = sqlite3.Row
-    con.enable_load_extension(True)
-    sqlite_vec.load(con)
-    con.enable_load_extension(False)
-    con.execute("PRAGMA foreign_keys = ON")
-    _install_schema(con, dim)
-    return con
+class Store:
+    """Thread-local sqlite3 connection factory."""
+
+    def __init__(self, path: str | Path, dim: int):
+        self._path = str(path)
+        self._dim = dim
+        self._local = threading.local()
+        # Touch one connection to install schema on disk.
+        _install_schema(self.connection(), dim)
+
+    def connection(self) -> sqlite3.Connection:
+        existing = getattr(self._local, "con", None)
+        if existing is not None:
+            return existing
+        con = sqlite3.connect(self._path)
+        con.row_factory = sqlite3.Row
+        con.enable_load_extension(True)
+        sqlite_vec.load(con)
+        con.enable_load_extension(False)
+        con.execute("PRAGMA foreign_keys = ON")
+        self._local.con = con
+        return con
+
+    def close(self) -> None:
+        existing = getattr(self._local, "con", None)
+        if existing is not None:
+            existing.close()
+            self._local.con = None
+
+
+def open_store(path: str | Path, dim: int) -> Store:
+    return Store(path, dim)
 
 
 def _install_schema(con: sqlite3.Connection, dim: int) -> None:

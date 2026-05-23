@@ -17,7 +17,8 @@ FIXTURE_VAULT = Path(__file__).parent / "fixtures" / "sample_vault"
 @pytest.fixture
 def indexed(tmp_path):
     embedder = HashEmbedBackend(dim=32)
-    con = open_store(tmp_path / "t.sqlite", dim=embedder.dim)
+    store = open_store(tmp_path / "t.sqlite", dim=embedder.dim)
+    con = store.connection()
     install_ledger_schema(con)
     cfgs = load_registry(REPO / "corpora.yaml", vault_root=FIXTURE_VAULT)
     for cfg in cfgs:

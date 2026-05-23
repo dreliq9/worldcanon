@@ -17,6 +17,7 @@ from watchdog.observers import Observer
 from .embedder import Embedder
 from .indexer import index_file, remove_file
 from .registry import CorpusConfig
+from .store import Store
 
 logger = logging.getLogger("worldcanon.watcher")
 
@@ -42,12 +43,12 @@ class VaultWatcher:
     def __init__(
         self,
         *,
-        con,
+        store: Store,
         embedder: Embedder,
         cfgs: list[CorpusConfig],
         vault_root: Path,
     ):
-        self._con = con
+        self._store = store
         self._embedder = embedder
         self._cfgs = cfgs
         self._vault_root = vault_root.resolve()
@@ -92,11 +93,14 @@ class VaultWatcher:
         cfg = self._match_corpus(file)
         if cfg is None:
             return
+        # store.connection() returns this thread's connection — the watcher
+        # daemon thread gets its own, distinct from any FastAPI worker.
+        con = self._store.connection()
         try:
             if deleted:
-                remove_file(self._con, cfg, file)
+                remove_file(con, cfg, file)
             else:
-                index_file(self._con, cfg, file, self._embedder)
+                index_file(con, cfg, file, self._embedder)
         except Exception as exc:
             logger.exception("watcher: failed to apply %s: %s", file, exc)
 

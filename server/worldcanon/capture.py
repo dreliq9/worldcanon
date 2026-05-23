@@ -12,6 +12,31 @@ import datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+
+def _yaml_inline_list(items: list[str]) -> str:
+    if not items:
+        return "[]"
+    dumped = yaml.safe_dump(
+        {"_": items},
+        default_flow_style=True,
+        allow_unicode=True,
+        width=10**9,
+    ).strip()
+    # dumped is "{_: [...]}" — strip the wrapper to get just the list.
+    return dumped[len("{_: "):-1]
+
+
+def _yaml_inline_scalar(value: str) -> str:
+    dumped = yaml.safe_dump(
+        {"_": value},
+        default_flow_style=True,
+        allow_unicode=True,
+        width=10**9,
+    ).strip()
+    return dumped[len("{_: "):-1]
+
 
 def brainstorm_template(
     *,
@@ -21,8 +46,9 @@ def brainstorm_template(
     entities: list[str],
     topics: list[str],
 ) -> str:
-    entities_inline = "[" + ", ".join(entities) + "]" if entities else "[]"
-    topics_inline = "[" + ", ".join(topics) + "]" if topics else "[]"
+    entities_inline = _yaml_inline_list(entities)
+    topics_inline = _yaml_inline_list(topics)
+    source_inline = _yaml_inline_scalar(source)
     lines = [
         "---",
         "type: brainstorm",
@@ -30,7 +56,7 @@ def brainstorm_template(
         "status: unprocessed",
         f"entities_mentioned: {entities_inline}",
         f"topics: {topics_inline}",
-        f"source: {source}",
+        f"source: {source_inline}",
         "---",
         "",
         "# ",
