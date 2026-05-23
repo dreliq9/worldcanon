@@ -36,6 +36,11 @@ if (Test-Path $ImporterSrc) {
     Copy-Item $ImporterSrc (Join-Path $InstallDir "worldcanon-import.exe") -Force
 }
 
+$DiagnoseSrc = Join-Path $Here "diagnose.ps1"
+if (Test-Path $DiagnoseSrc) {
+    Copy-Item $DiagnoseSrc (Join-Path $InstallDir "diagnose.ps1") -Force
+}
+
 # Persist the vault path so the task can reference it
 $VaultPath | Set-Content -Path (Join-Path $InstallDir "vault-path.txt") -Encoding UTF8
 
@@ -83,3 +88,6 @@ Write-Host ""
 Write-Host "The sidecar will auto-start at login. To stop it temporarily:"
 Write-Host "  Stop-ScheduledTask -TaskName $TaskName"
 Write-Host "To remove entirely, run uninstall.ps1."
+Write-Host ""
+Write-Host "If anything stops working later, run diagnose.ps1 in this folder"
+Write-Host "and send the resulting Desktop zip to Adam."

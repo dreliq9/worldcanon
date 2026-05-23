@@ -1,0 +1,7 @@
+{
+  "worldcanon-canon:canon-log-brainstorm": [{"modifiers": ["Mod", "Shift"], "key": "B"}],
+  "worldcanon-canon:canon-open-pane": [{"modifiers": ["Mod", "Shift"], "key": "C"}],
+  "worldcanon-canon:canon-search": [{"modifiers": ["Mod", "Shift"], "key": "K"}],
+  "worldcanon-canon:canon-ask": [{"modifiers": ["Mod", "Shift"], "key": "A"}],
+  "worldcanon-canon:canon-develop-entity": [{"modifiers": ["Mod", "Shift"], "key": "D"}]
+}

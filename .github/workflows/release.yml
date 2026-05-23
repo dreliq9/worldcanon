@@ -49,7 +49,9 @@ jobs:
           Copy-Item dist\worldcanon-import.exe dist\release\
           Copy-Item scripts\install.ps1 dist\release\
           Copy-Item scripts\uninstall.ps1 dist\release\
+          Copy-Item scripts\diagnose.ps1 dist\release\
           Copy-Item INSTALL.md dist\release\
+          Copy-Item starter-vault dist\release\starter-vault -Recurse
           Compress-Archive -Path dist\release\* -DestinationPath dist\worldcanon-windows-x64.zip
         shell: pwsh
 
