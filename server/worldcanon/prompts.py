@@ -152,3 +152,16 @@ def render_name_suggest(
         vibe_line=vibe_line,
         count=count,
     )
+
+
+_TRIAGE_MAX_CONTENT_CHARS = 2000
+
+
+def render_triage_suggest(*, filename: str, content: str) -> str:
+    truncated = content[:_TRIAGE_MAX_CONTENT_CHARS]
+    if len(content) > _TRIAGE_MAX_CONTENT_CHARS:
+        truncated += "\n\n[…truncated…]"
+    return _load("triage_suggest").format(
+        filename=filename,
+        content=truncated,
+    )
