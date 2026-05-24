@@ -59,7 +59,20 @@ def test_capture_defaults_source_to_webhook(tmp_path):
     assert "source: webhook" in content
 
 
-def test_capture_rejects_empty_text(tmp_path):
-    client, _ = _build_client(StubBackend(responses=[]), tmp_path)
+def test_capture_accepts_empty_text(tmp_path):
+    """The plugin's 'Log brainstorm' command creates an empty stub note
+    that the user types into. Sidecar must accept empty text."""
+    client, vault = _build_client(StubBackend(responses=[]), tmp_path)
     r = client.post("/capture", json={"text": ""})
-    assert r.status_code == 422
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert (vault / body["path"]).exists()
+
+
+def test_capture_accepts_no_text_field_at_all(tmp_path):
+    """All fields have defaults; an empty POST body should still create a stub note."""
+    client, vault = _build_client(StubBackend(responses=[]), tmp_path)
+    r = client.post("/capture", json={})
+    assert r.status_code == 200
+    assert (vault / r.json()["path"]).exists()

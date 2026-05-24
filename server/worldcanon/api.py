@@ -72,7 +72,10 @@ class ProposeFactsRequest(BaseModel):
 
 
 class CaptureRequest(BaseModel):
-    text: str = Field(..., min_length=1)
+    # text can be empty: the Obsidian plugin's "Log brainstorm" flow
+    # creates an empty stub note that the user types into. Other callers
+    # (webhooks, scripts) pass a real payload.
+    text: str = ""
     source: str = "webhook"
     entities: list[str] = Field(default_factory=list)
     topics: list[str] = Field(default_factory=list)
@@ -472,8 +475,6 @@ def build_app(
 
     @app.post("/capture")
     def capture_endpoint(req: CaptureRequest) -> dict[str, Any]:
-        if not req.text.strip():
-            raise HTTPException(status_code=422, detail="text must not be empty")
         now_iso = datetime.datetime.now().isoformat(timespec="seconds")
         return write_brainstorm_note(
             vault_root=vault_root,
