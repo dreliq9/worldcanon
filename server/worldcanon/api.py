@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from pydantic import BaseModel, Field
 
@@ -113,6 +114,19 @@ def build_app(
     vault_root: Path,
 ) -> FastAPI:
     app = FastAPI(title="worldcanon-sidecar")
+
+    # The Obsidian plugin runs under app://obsidian.md and uses fetch(),
+    # which Chromium treats as cross-origin against http://127.0.0.1:7777.
+    # Without these headers, the browser blocks JS from reading the
+    # response and the plugin sees the sidecar as "unreachable" even
+    # though the request returns 200 OK. Sidecar is loopback-only, so
+    # the wide-open CORS policy doesn't expose us off-host.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/stats")
     def stats() -> dict[str, Any]:
