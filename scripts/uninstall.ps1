@@ -39,7 +39,7 @@ try {
     Write-Host ""
     Write-Host "Uninstall complete." -ForegroundColor Green
     Write-Host ""
-    Write-Host "The plugin in your Obsidian vault is NOT removed — to remove that,"
+    Write-Host "The plugin in your Obsidian vault is NOT removed -- to remove that,"
     Write-Host "open Obsidian, Settings -> Community plugins, click the trash icon"
     Write-Host "next to Worldbuilder Canon."
 }

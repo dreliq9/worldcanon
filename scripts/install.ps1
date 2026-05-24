@@ -111,7 +111,7 @@ try {
     Write-Host "Logs:     $InstallDir\sidecar.log"
     Write-Host "Verify:   open http://127.0.0.1:$Port/stats in a browser"
     Write-Host ""
-    Write-Host "Next: install the plugin (worldcanon-plugin.zip → install.cmd)."
+    Write-Host "Next: install the plugin (worldcanon-plugin.zip -> install.cmd)."
     Write-Host "If anything stops working later, run diagnose.cmd in this folder"
     Write-Host "and send the resulting Desktop zip to Adam."
 }
